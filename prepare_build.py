@@ -59,6 +59,26 @@ def replace_once(path, old, new):
     path.write_text(text.replace(old, new))
 
 
+def configure_reference_build():
+    path = Path('UniXNU/scripts/build-fileset-release-reference.py')
+    # This auxiliary build had an independent hard-coded eight-job setting.
+    # Honour the same bounded parallelism as the main kernel build.
+    replace_once(path, "'BUILD_WERROR=0','MAKEJOBS=-j8',",
+                 "'BUILD_WERROR=0',f'MAKEJOBS=-j{int(os.environ.get(\"JOBS\", \"2\"))}',")
+    marker = "    build_log = (output / f'{mode}-build.log').read_text()\n"
+    replace_once(path, marker, marker+'''    required_list = output / f'{mode}-obj/RELEASE_ARM64_BCM2837' / ('nonltolink.filelist' if options.lto else 'link.filelist')
+    if not required_list.is_file():
+        lines = build_log.splitlines()
+        failures = [i for i, line in enumerate(lines) if re.search(r'error:|fatal error|Killed|Error [0-9]', line)]
+        for i in failures[:16]:
+            print('\\n'.join(lines[max(0, i-2):i+5]), flush=True)
+        print('\\n'.join(lines[-40:]), flush=True)
+        raise RuntimeError('RELEASE reference compilation did not reach its link file list; see compiler diagnostics above')
+''')
+    replace_once(path, "    if result.returncode:\n        raise SystemExit(result.returncode)\n",
+                 "    if result.returncode:\n        print((output / f'{mode}-build.log').read_text()[-24000:], flush=True)\n        raise SystemExit(result.returncode)\n")
+
+
 def main():
     for directory, revision in PINS.items():
         actual = subprocess.check_output(["git", "-C", directory, "rev-parse", "HEAD"], text=True).strip()
@@ -111,6 +131,7 @@ def main():
     assert "drivers/SoftwareAES/NativeAES.cpp" in adapter and "-DNATIVE_AES_DARWIN26=1" in adapter
     assert 'build-gop-legacy-display-27.py' in archives
     recover_storage_start()
+    configure_reference_build()
 
     # The upstream live-map correction is qualified only for 8 GiB. Bound
     # the static fallback to the conservative ranges verified for this
@@ -145,6 +166,7 @@ def main():
               "root_policy_profile": PROFILE, "payload_logical_mib": 256,
               "firmware_static_memory_corrected": True, "firmware_memory_ranges": memory_ranges}
     report['source_storage_restored_from'] = STORAGE_GOOD_REVISION
+    report['release_reference_jobs'] = int(os.environ.get('JOBS', '2'))
     Path("reports").mkdir(exist_ok=True)
     Path("reports/build-plan.json").write_text(json.dumps(report, indent=2) + "\n")
     print("Prepared pinned full-capacity sources and fresh English automatic-login seed settings.")

@@ -30,7 +30,7 @@ def main():
     for source in (Path("reports"), TARGET / "logs"):
         if source.exists():
             copy(source, bundle / source.name)
-    for pattern in ("build-*.log", "*.command.json"):
+    for pattern in ("*.log", "*command.json"):
         for source in (TARGET / "tree/build").rglob(pattern):
             copy(source, bundle / "diagnostics" / source.relative_to(TARGET / "tree/build"))
     for directory in ("UniXNU", "device", "uefi-sheng"):

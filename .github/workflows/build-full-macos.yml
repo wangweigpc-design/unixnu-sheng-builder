@@ -31,6 +31,9 @@ jobs:
       UNIXNU_UNIQUE_CHIP_ID: ${{ secrets.UNIXNU_UNIQUE_CHIP_ID }}
       UNIXNU_LAB_PASSWORD: ${{ secrets.MACOS_TEMP_PASSWORD }}
       ARTIFACT_AGE_RECIPIENT: ${{ vars.ARTIFACT_AGE_RECIPIENT }}
+      RUNTIME_CACHE_RELEASE: ${{ vars.RUNTIME_CACHE_RELEASE }}
+      RUNTIME_CACHE_SHA256: ${{ vars.RUNTIME_CACHE_SHA256 }}
+      RUNTIME_CACHE_AGE_IDENTITY: ${{ secrets.RUNTIME_CACHE_AGE_IDENTITY }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -83,6 +86,8 @@ jobs:
           rustup toolchain install 1.98.0 --profile minimal --component rust-src
           xcodebuild -version
           xcrun --sdk iphoneos --show-sdk-version
+      - name: Restore optional authenticated runtime inputs
+        run: python3 restore_runtime.py
       - name: Resolve sources and create fresh 210 GiB Data seed
         working-directory: UniXNU
         run: |
@@ -110,7 +115,17 @@ jobs:
         working-directory: device
         run: |
           set -euo pipefail
-          scripts/package.sh --os macos-27 --uefi ../uefi-sheng --no-deps 2>&1 | tee ../reports/build.log
+          python3 - <<'PY' 2>&1 | tee ../reports/build.log
+          import json, subprocess
+          from pathlib import Path
+          command = ['scripts/package.sh', '--os', 'macos-27', '--uefi', '../uefi-sheng', '--no-deps']
+          resume = Path('../reports/resume-options.json')
+          if resume.is_file():
+              options = json.loads(resume.read_text())
+              for key, flag in [('data_ramdisk', '--data-ramdisk'), ('trust_cache', '--owner-trust-cache'), ('gpu_addon', '--gpu-addon')]:
+                  command += [flag, options[key]]
+          subprocess.run(command, check=True)
+          PY
       - name: Build matching root image
         id: root
         working-directory: UniXNU

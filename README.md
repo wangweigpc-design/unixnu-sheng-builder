@@ -63,6 +63,17 @@ artifact or cache uploads are configured.
 
 On failure, completed Data/runtime inputs are retained in the encrypted bundle
 with their checksums, so later repairs can reuse them after validation.
+An optional runtime-only cache uses `RUNTIME_CACHE_RELEASE` and
+`RUNTIME_CACHE_SHA256` repository variables and a separate
+`RUNTIME_CACHE_AGE_IDENTITY` secret. The installer-image decryption identity is
+never reused for this cache. Restoring checks the source pins, profile, seed
+capacity, filenames, sizes and hashes before the original builder consumes the
+inputs. Kernel compilation, signed-root generation and output checks still run.
+
+The RELEASE reference build also honours `JOBS` instead of its upstream
+hard-coded eight workers. If compilation stops before the link file list exists,
+its compiler errors are printed and all nested build logs are retained in the
+encrypted diagnostics.
 
 The workflow uses a standard runner, two compilation jobs, and a six-hour job
 limit. Build success does not imply hardware stability or verified charging,
