@@ -1,0 +1,32 @@
+name: Check standard macOS runner
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: standard-macos-runner-check
+  cancel-in-progress: false
+
+jobs:
+  environment:
+    if: github.event.repository.private == false
+    runs-on: macos-26
+    timeout-minutes: 5
+    steps:
+      - name: Check macOS build tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          sw_vers
+          uname -m
+          xcodebuild -version
+          xcrun --sdk macosx --show-sdk-version
+          xcrun --sdk iphoneos --show-sdk-version
+          python3 --version
+          command -v hdiutil
+          command -v diskutil
+          df -h .
+          printf '%s\n' 'Standard public macOS runner started; no image build was performed.'
