@@ -1,4 +1,5 @@
 """Apply narrowly checked full-capacity and first-login settings to pinned sources."""
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -12,6 +13,43 @@ PINS = {
     "device": "bc05635a483d69a6c51cafd44723372b66c941f3",
     "uefi-sheng": "8156d2e54a9f57818dc8b415a1a7dc28ad9ba4be",
 }
+STORAGE_GOOD_REVISION = "d7c7aee91fe740f5b986165312aa7044cd09dfd4"
+
+
+def recover_storage_start():
+    """Recover the removed function tail from its last complete source revision."""
+    path = Path('device/package/SourceStorage.cpp')
+    current = path.read_text()
+    assert hashlib.sha256(current.encode()).hexdigest() == '7811e0fc636abfeced1b067d2b4dac669e000bb2a11a8b7b3b570ce2b0a5caa8'
+    subprocess.run(['git', '-C', 'device', 'fetch', '--depth=1', 'origin', STORAGE_GOOD_REVISION], check=True)
+    original = subprocess.check_output(['git', '-C', 'device', 'show',
+                                        STORAGE_GOOD_REVISION+':package/SourceStorage.cpp']).decode()
+    assert hashlib.sha256(original.encode()).hexdigest() == '603e6ce031d6a2e384a6fbd1532563bb7eec037d30e5a019ca513ca2d213e85d'
+    marker = '    attempted = true;\n'
+    assert current.endswith(marker) and original.count(marker) == current.count(marker) == 1
+    tail = original.split(marker, 1)[1]
+    assert tail.endswith('    ufsBench();\n}\n')
+    # The new helpers only emit diagnostics when storage-probe=1; the normal
+    # boot path retains the complete authenticated storage startup sequence.
+    repaired = current + tail
+    repaired = repaired.replace(marker, marker+'    startup_probe_start();\n    startup_mark("begin");\n')
+    repaired = repaired.replace('    ufsBench();\n}', '    ufsBench();\n    startup_mark("ready");\n}')
+    without_probes = repaired.replace('    startup_probe_start();\n    startup_mark("begin");\n', '').replace('    startup_mark("ready");\n', '')
+    assert without_probes == current+tail
+    tokens = re.sub(r'//[^\n]*|/\*.*?\*/|"(?:\\.|[^"\\])*"', '', repaired, flags=re.S)
+    assert tokens.count('{') == tokens.count('}')
+    path.write_text(repaired)
+    record = Path('device/porting.toml')
+    text = record.read_text()
+    start = text.index('id = "storage"')
+    end = text.index('\n[[area]]', start)
+    block = text[start:end]
+    finding = re.search(r'^findings = (\[.*\])$', block, re.M)
+    assert finding is not None
+    findings = tomllib.loads('findings = '+finding[1])['findings']
+    findings.append('The full-capacity builder restores the SourceStorage startup tail removed by 60566370 from complete revision '+STORAGE_GOOD_REVISION+'. IOStorageFamily/APFS loading, policy authentication, class registration, UFS and Data startup are preserved. Current BootTime conversions remain; storage-probe checkpoints are optional. Hardware qualification is pending.')
+    block = block[:finding.start()]+ 'findings = '+json.dumps(findings)+block[finding.end():]
+    record.write_text(text[:start]+block+text[end:])
 
 
 def replace_once(path, old, new):
@@ -72,6 +110,7 @@ def main():
     adapter = Path('device/scripts/build-gop-legacy-display-27.py').read_text()
     assert "drivers/SoftwareAES/NativeAES.cpp" in adapter and "-DNATIVE_AES_DARWIN26=1" in adapter
     assert 'build-gop-legacy-display-27.py' in archives
+    recover_storage_start()
 
     # The upstream live-map correction is qualified only for 8 GiB. Bound
     # the static fallback to the conservative ranges verified for this
@@ -105,6 +144,7 @@ def main():
               "software_aes": "Darwin 26 fixture in build-gop-legacy-display-27.py",
               "root_policy_profile": PROFILE, "payload_logical_mib": 256,
               "firmware_static_memory_corrected": True, "firmware_memory_ranges": memory_ranges}
+    report['source_storage_restored_from'] = STORAGE_GOOD_REVISION
     Path("reports").mkdir(exist_ok=True)
     Path("reports/build-plan.json").write_text(json.dumps(report, indent=2) + "\n")
     print("Prepared pinned full-capacity sources and fresh English automatic-login seed settings.")

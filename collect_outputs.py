@@ -37,6 +37,28 @@ def main():
         if (Path(directory) / ".git").exists():
             result = subprocess.run(["git", "-C", directory, "diff", "--binary"], capture_output=True, check=True)
             (bundle / (directory + ".patch")).write_bytes(result.stdout)
+    if not args.success and (TARGET / 'runtime/inputs.json').is_file():
+        # Preserve finished runtime outputs inside the encrypted failure
+        # bundle. These can later be validated and reused as explicit inputs;
+        # the installation decryption key is never uploaded to a runner.
+        runtime = json.loads((TARGET / 'runtime/inputs.json').read_text())
+        resume = bundle / 'resume-runtime'
+        resume.mkdir(exist_ok=True)
+        mapping = {'data_ramdisk': 'data.dbr', 'trust_cache': 'trust-cache.bin', 'gpu_addon': 'gpu-addon.bin'}
+        manifest = {'data_volume_uuid': runtime['data_volume_uuid'], 'inputs': {}}
+        workspace = Path.cwd().resolve()
+        for key, name in mapping.items():
+            item = runtime['inputs'][key]
+            source = Path(item['path']).resolve()
+            if not source.is_relative_to(workspace) or not source.is_file() or source.stat().st_size > 512*2**20:
+                raise RuntimeError('Invalid runtime resume input: '+key)
+            with source.open('rb') as handle:
+                digest = hashlib.file_digest(handle, 'sha256').hexdigest()
+            if digest != item['sha256']:
+                raise RuntimeError('Runtime resume input changed: '+key)
+            shutil.copy2(source, resume/name)
+            manifest['inputs'][key] = {'file': name, 'sha256': digest, 'bytes': source.stat().st_size}
+        (resume/'manifest.json').write_text(json.dumps(manifest, indent=2)+'\n')
     if args.success:
         files = ["boot/boot.img", "boot/boot.json", "runtime/data.dbr", "runtime/inputs.json",
                  "userdata/userdata-root.img", "userdata/userdata-root.json", "package.manifest.json"]

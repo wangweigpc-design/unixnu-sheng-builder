@@ -46,12 +46,23 @@ UEFI memory ranges are narrowed for the older-firmware 12 GiB layout; the upstre
 private final packaging for that older bootloader. The logical payload FAT is
 256 MiB and is chunk-compressed; the physical Android boot limit remains 192 MiB.
 
+The pinned device snapshot has a truncated `SourceStorage.cpp`. Its missing
+startup tail is recovered from complete revision
+`d7c7aee91fe740f5b986165312aa7044cd09dfd4`, with both input hashes checked.
+Root-policy authentication, storage-family/APFS loading, class registration,
+UFS startup and Data startup remain intact. Current timing conversions are
+preserved; optional startup checkpoints are connected to the restored function.
+The storage porting record records this repair and its pending hardware status.
+
 Required repository secrets are `UNIXNU_UNIQUE_CHIP_ID` and
 `MACOS_TEMP_PASSWORD`. `ARTIFACT_AGE_RECIPIENT` is a public age recipient stored
 as a repository variable. The corresponding private decryption identity stays
 outside GitHub. Private installation inputs, images, policy keys, and diagnostic
 bundles are encrypted before they are uploaded as release assets. No Actions
 artifact or cache uploads are configured.
+
+On failure, completed Data/runtime inputs are retained in the encrypted bundle
+with their checksums, so later repairs can reuse them after validation.
 
 The workflow uses a standard runner, two compilation jobs, and a six-hour job
 limit. Build success does not imply hardware stability or verified charging,
