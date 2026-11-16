@@ -89,6 +89,20 @@ jobs:
           set -euo pipefail
           ./unixnu defconfig sheng_macos_defconfig -D ../device --os macos-27
           ./unixnu fetch --os macos-27 2>&1 | tee ../reports/fetch.log
+          python3 - <<'PY'
+          import json, sys
+          from pathlib import Path
+          sys.path.insert(0, 'scripts')
+          from unixnu.cli import parser, prepare
+          from unixnu.config import Context
+          from unixnu.kernel import archive_plan
+          ctx = Context(parser().parse_args(['build', 'kernel', '-D', '../device', '--os', 'macos-27']))
+          prepare(ctx, ['kernel'])
+          plan = archive_plan(ctx)
+          report = [(kind, entry['id'] if kind == 'component' else entry) for kind, entry in plan]
+          Path('../reports/archive-plan.json').write_text(json.dumps(report, indent=2) + '\n')
+          print('Verified ordered macOS archive plan before expensive runtime compilation.')
+          PY
           python3 ../device/scripts/prepare-macos-install.py 2>&1 | tee ../reports/prepare.log
           ./unixnu status --os macos-27 --json > ../reports/resolved-status.json
       - name: Build kernel, runtime and boot image

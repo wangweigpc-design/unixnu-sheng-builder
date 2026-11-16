@@ -2,6 +2,7 @@
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import tomllib
 
@@ -40,13 +41,49 @@ def main():
     replace_once(board, '"max_image_bytes" = 202375168', '"max_image_bytes" = 201326592')
     replace_once(board, f'["os_overrides"."{PROFILE}"."payload"]\n"timeout" = -1',
                  f'["os_overrides"."{PROFILE}"."payload"]\n"timeout" = 5')
+    # Match the logical FAT capacity used by the current macOS lab. The
+    # encoded Android image must still fit the separately enforced 192 MiB.
+    replace_once(board, '"size_mib" = 187', '"size_mib" = 256')
+    base_board = tomllib.loads(board.read_text())
+    archives = base_board['kernel']['archives']
+    old_policy = 'build-sheng-source-storage.py --policy-dir scripts/policies/ipados-27.0.1-24A446'
+    assert archives.count(old_policy) == 1
+    archives = [entry.replace(old_policy, f'build-sheng-source-storage.py --policy-dir scripts/policies/{PROFILE}')
+                for entry in archives]
     with board.open("a") as output:
         output.write(f'\n[os_overrides."{PROFILE}".kernel]\n'
-                     'config_fragments = ["arch:configs/common.config", "os:configs/macos.config"]\n')
+                     'config_fragments = ["arch:configs/common.config", "os:configs/macos.config"]\n'
+                     'archives = ' + json.dumps(archives) + '\n')
     parsed = tomllib.loads(board.read_text())
     override = parsed["os_overrides"][PROFILE]
     assert override["payload"]["runtime"]["data_gib"] == 210
     assert override["bootimg"]["max_image_bytes"] == 201326592
+
+    # This selected macOS profile compiles NativeAES.cpp with its Darwin 26
+    # vtable fixture inside build-gop-legacy-display-27.py, then links it into
+    # that adapter. Keep the source selected, but do not require a second,
+    # incompatible generic iPadOS SoftwareAES archive.
+    catalog = Path('UniXNU/components.toml')
+    catalog_text = catalog.read_text()
+    blocks = re.findall(r'\[\[component\]\]\n.*?(?=\n\[\[component\]\]|\Z)', catalog_text, re.S)
+    aes_blocks = [block for block in blocks if re.search(r'^id = "SoftwareAES"$', block, re.M)]
+    assert len(aes_blocks) == 1 and aes_blocks[0].count('build_stage = "kernel"') == 1
+    replace_once(catalog, aes_blocks[0], aes_blocks[0].replace('build_stage = "kernel"', 'build_stage = "embedded"'))
+    adapter = Path('device/scripts/build-gop-legacy-display-27.py').read_text()
+    assert "drivers/SoftwareAES/NativeAES.cpp" in adapter and "-DNATIVE_AES_DARWIN26=1" in adapter
+    assert 'build-gop-legacy-display-27.py' in archives
+
+    # The upstream live-map correction is qualified only for 8 GiB. Bound
+    # the static fallback to the conservative ranges verified for this
+    # 12 GiB/older-firmware installation; do not broaden the 8 GiB guard.
+    memory = Path('uefi-sheng/Platforms/Xiaomi/shengPkg/Library/MemoryMapLib/MemoryMapLib.c')
+    memory_ranges = [
+        ('DRAM bank 1 low', '0x880000000, 0x3B300000', '0x880000000, 0x39D00000'),
+        ('DRAM gap 0xCCF80000', '0xCCF80000, 0x0B080000', '0xCCF80000, 0x07D80000'),
+        ('DRAM gap 0xE671D000', '0xE671D000, 0x190E3000', '0xE7CB0000, 0x17B50000'),
+    ]
+    for label, before, after in memory_ranges:
+        replace_once(memory, '{"' + label + '", ' + before + ',', '{"' + label + '", ' + after + ',')
 
     # The pinned installer accidentally shadows the imported CLI parser.
     installer = Path("device/scripts/prepare-macos-install.py")
@@ -64,7 +101,10 @@ def main():
 """)
     report = {"profile": PROFILE, "pins": PINS, "root_partition": "userdata",
               "data_gib": 210, "boot_max_bytes": 201326592, "initial_language": "en-US",
-              "auto_login": True, "hardware_tested": False}
+              "auto_login": True, "hardware_tested": False,
+              "software_aes": "Darwin 26 fixture in build-gop-legacy-display-27.py",
+              "root_policy_profile": PROFILE, "payload_logical_mib": 256,
+              "firmware_static_memory_corrected": True, "firmware_memory_ranges": memory_ranges}
     Path("reports").mkdir(exist_ok=True)
     Path("reports/build-plan.json").write_text(json.dumps(report, indent=2) + "\n")
     print("Prepared pinned full-capacity sources and fresh English automatic-login seed settings.")

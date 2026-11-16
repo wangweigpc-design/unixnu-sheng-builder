@@ -38,6 +38,14 @@ seed, uses the stock `userdata` layout, limits boot images to 192 MiB, and
 configures English initial preferences and automatic login. The installer parser
 shadowing error is repaired with an exact source check. It does not flash a device.
 
+The selected macOS archive plan uses the matching macOS signed-root policies.
+SoftwareAES is built by the board's Darwin 26 ABI adapter, not its generic iPadOS
+component recipe. The plan is checked before runtime compilation. Three static
+UEFI memory ranges are narrowed for the older-firmware 12 GiB layout; the upstream
+8 GiB live-map guard is preserved. A verified original DTB is still needed during
+private final packaging for that older bootloader. The logical payload FAT is
+256 MiB and is chunk-compressed; the physical Android boot limit remains 192 MiB.
+
 Required repository secrets are `UNIXNU_UNIQUE_CHIP_ID` and
 `MACOS_TEMP_PASSWORD`. `ARTIFACT_AGE_RECIPIENT` is a public age recipient stored
 as a repository variable. The corresponding private decryption identity stays
