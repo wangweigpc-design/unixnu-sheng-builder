@@ -72,6 +72,11 @@ def configure_reference_build():
     # retain its original PAC validation and signed-thread-state manipulation.
     replace_once(path, '-DXNU_SOURCE_CORECRYPTO14=1 -DXNU_BOOT_PROGRESS=0',
                  '-DXNU_SOURCE_CORECRYPTO14=1 -DXNU_BOOT_PROGRESS=0 -DUNIXNU_REFERENCE_MEMORY_PROBE=1')
+    # Newly added weak board diagnostics also appear in this comparison build.
+    # Extend its existing native-hook stubs only to board diagnostic names;
+    # the real booted kernel still links their implementations from the board.
+    replace_once(path, 'native_[a-z0-9_]+|boot_log_rounds|boot_cache_input_capture',
+                 'native_[a-z0-9_]+|boot_log_[a-z0-9_]+|boot_cache_input_capture|sheng_boot_watchdog_policy')
     marker = "        manifest = {str(p.relative_to(source)): hashlib.sha256(p.read_bytes()).hexdigest()\n"
     replace_once(path, marker, '''        thread_status = source / 'osfmk/mach/arm/thread_status.h'
         thread_text = thread_status.read_text()

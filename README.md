@@ -78,6 +78,8 @@ The macOS outside-memory probe needs Apple's `add_saved_state_pc` helper. The
 RELEASE comparison copy enables that original helper with a scoped feature
 guard; its signed-thread-state checks remain unchanged. The booted DEVELOPMENT
 kernel is not modified by this comparison-only repair.
+Its existing optional-hook stubs include the newer weak board logging hooks;
+the final booted kernel continues to use the actual board implementations.
 
 The workflow uses a standard runner, two compilation jobs, and a six-hour job
 limit. Build success does not imply hardware stability or verified charging,
