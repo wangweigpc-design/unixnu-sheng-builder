@@ -37,6 +37,17 @@ def main():
         if (Path(directory) / ".git").exists():
             result = subprocess.run(["git", "-C", directory, "diff", "--binary"], capture_output=True, check=True)
             (bundle / (directory + ".patch")).write_bytes(result.stdout)
+    if not args.success:
+        # Keep completed prelink inputs for offline layout diagnosis on the NAS.
+        # These remain inside the encrypted bundle, never a plaintext release.
+        for source, name in (
+            (TARGET / 'tree/build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837.unstripped.noctf', 'native-kernel.macho'),
+            (Path('UniXNU/out/ipsw/26C5035r/kernelcache.decompressed'), 'original-kernelcache.macho'),
+            (TARGET / 'kernel/kernel.map.json', 'kernel.map.json'),
+            (TARGET / 'kernel/kernel.failed.json', 'kernel.failed.json'),
+        ):
+            if source.is_file():
+                copy(source, bundle / 'prelink-inputs' / name)
     if not args.success and (TARGET / 'runtime/inputs.json').is_file():
         # Preserve finished runtime outputs inside the encrypted failure
         # bundle. These can later be validated and reused as explicit inputs;

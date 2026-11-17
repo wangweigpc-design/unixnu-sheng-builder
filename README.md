@@ -80,6 +80,18 @@ guard; its signed-thread-state checks remain unchanged. The booted DEVELOPMENT
 kernel is not modified by this comparison-only repair.
 Its existing optional-hook stubs include the newer weak board logging hooks;
 the final booted kernel continues to use the actual board implementations.
+The comparison kernel also follows `UNIXNU_XNU_TARGET`, just like the main
+kernel: macOS selects `XNU_TARGET_OS_OSX` and its padded IOKit vtables. The
+original iOS object platform is retained. The selected target participates in
+the comparison cache identity, and unsupported targets are rejected.
+
+Compiler source paths are normalized from the CI workspace to `/src` using
+`-ffile-prefix-map`. This reduces embedded path strings in the fixed-size native
+`__TEXT` placement without removing drivers or relaxing layout checks. An early
+Apple-clang probe checks that its path string shortens while its instructions
+stay identical. The full kernel still has to pass the normal prelink checks.
+Failed builds retain completed native/kernelcache inputs in the encrypted
+diagnostics so layout issues can be reproduced offline.
 
 The workflow uses a standard runner, two compilation jobs, and a six-hour job
 limit. Build success does not imply hardware stability or verified charging,

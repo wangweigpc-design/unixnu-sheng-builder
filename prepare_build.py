@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import re
+import struct
 import subprocess
 import tomllib
 
@@ -112,6 +113,62 @@ def configure_reference_build():
                  "    if result.returncode:\n        print((output / f'{mode}-build.log').read_text()[-24000:], flush=True)\n        raise SystemExit(result.returncode)\n")
 
 
+def configure_source_paths():
+    # Long CI checkout paths inflate __FILE__/source-location strings in the
+    # fixed-size native __TEXT hole. Normalize paths, retaining all code and
+    # collision checks. Archive builders replay these recorded compiler flags.
+    baseline = Path('UniXNU/scripts/build-xnu-4k-baseline.sh')
+    marker = 'EXTRA_CFLAGS="$EXTRA_CFLAGS -DXNU_BOOT_PROGRESS=$BOOT_PROGRESS"\n'
+    replace_once(baseline, marker, marker+
+                 'EXTRA_CFLAGS="$EXTRA_CFLAGS -ffile-prefix-map=${GITHUB_WORKSPACE:-$ROOT}=/src"\n')
+    reference = Path('UniXNU/scripts/build-fileset-release-reference.py')
+    marker = "    args = ['make','-C',str(source),'build','SDKROOT=iphoneos',\n"
+    replace_once(reference, marker,
+                 "    flags += f' -ffile-prefix-map={os.environ.get(\"GITHUB_WORKSPACE\", str(root))}=/src'\n"+marker)
+
+
+def check_source_paths():
+    """Check the actual Apple compiler before spending time on the full build."""
+    workspace = str(Path.cwd().resolve())
+    expected = os.environ.get('GITHUB_WORKSPACE', workspace)
+    if expected != workspace or any(c.isspace() for c in workspace):
+        raise RuntimeError('Unexpected compiler prefix-map workspace')
+    probe = Path('reports/source-prefix-probe.c').resolve()
+    probe.parent.mkdir(exist_ok=True)
+    probe.write_text('const char *build_source_path = __FILE__;\n'
+                     'int prefix_map_check(int value) { return value ^ 7; }\n')
+    def sections(data):
+        if struct.unpack_from('<I', data)[0] != 0xfeedfacf:
+            raise RuntimeError('Expected Mach-O probe object')
+        found, offset = {}, 32
+        for _ in range(struct.unpack_from('<I', data, 16)[0]):
+            command, size = struct.unpack_from('<II', data, offset)
+            if command == 0x19:
+                for i in range(struct.unpack_from('<I', data, offset+64)[0]):
+                    at = offset+72+80*i
+                    name = data[at:at+16].split(b'\0', 1)[0].decode()
+                    length, begin = struct.unpack_from('<QI', data, at+40)
+                    found[name] = data[begin:begin+length]
+            offset += size
+        return found
+    objects = []
+    for label, flags in [('original', []), ('normalized', [f'-ffile-prefix-map={workspace}=/src'])]:
+        output = probe.with_suffix('.'+label+'.o')
+        subprocess.run(['xcrun', 'clang', '-target', 'arm64e-apple-ios27.0', '-mkernel', '-O2',
+                        *flags, '-c', str(probe), '-o', str(output)], check=True)
+        objects.append(sections(output.read_bytes()))
+    original, normalized = objects
+    if (original['__text'] != normalized['__text'] or workspace.encode() not in original['__cstring']
+            or normalized['__cstring'] != b'/src/reports/source-prefix-probe.c\0'):
+        raise RuntimeError('Apple compiler source-prefix mapping check failed')
+    result = {'instruction_bytes_unchanged': True,
+              'original_string_bytes': len(original['__cstring']),
+              'normalized_string_bytes': len(normalized['__cstring']),
+              'full_kernel_layout_verified': False}
+    Path('reports/source-prefix-check.json').write_text(json.dumps(result, indent=2)+'\n')
+    print('Apple compiler path normalization: same probe instructions, shorter source string.')
+
+
 def main():
     for directory, revision in PINS.items():
         actual = subprocess.check_output(["git", "-C", directory, "rev-parse", "HEAD"], text=True).strip()
@@ -165,6 +222,8 @@ def main():
     assert 'build-gop-legacy-display-27.py' in archives
     recover_storage_start()
     configure_reference_build()
+    configure_source_paths()
+    check_source_paths()
 
     # The upstream live-map correction is qualified only for 8 GiB. Bound
     # the static fallback to the conservative ranges verified for this
@@ -202,6 +261,7 @@ def main():
     report['release_reference_jobs'] = int(os.environ.get('JOBS', '2'))
     report['release_reference_saved_pc_helper'] = 'Original authenticated helper enabled only in the isolated comparison source copy'
     report['release_reference_target'] = 'Matches UNIXNU_XNU_TARGET and the main kernel IOKit ABI; target included in cache identity'
+    report['compiler_source_prefix_map'] = 'CI workspace maps to /src; fixed-size fileset collision checks retained'
     Path("reports").mkdir(exist_ok=True)
     Path("reports/build-plan.json").write_text(json.dumps(report, indent=2) + "\n")
     print("Prepared pinned full-capacity sources and fresh English automatic-login seed settings.")
