@@ -61,6 +61,18 @@ def replace_once(path, old, new):
 
 def configure_reference_build():
     path = Path('UniXNU/scripts/build-fileset-release-reference.py')
+    # Match the main kernel's IOKit ABI selection. Both profiles deliberately
+    # retain the iOS object platform; macOS selects the padded kext vtables via
+    # XNU_TARGET_OS_OSX, exactly as build-xnu-4k-baseline.sh does.
+    replace_once(path, "    mode = 'lto' if options.lto else 'snapshot'\n", """    target = os.environ.get('UNIXNU_XNU_TARGET', 'ios')
+    target_defines = {'ios': '-DXNU_TARGET_OS_IOS', 'macosx': '-DXNU_TARGET_OS_OSX'}
+    if target not in target_defines:
+        raise ValueError('UNIXNU_XNU_TARGET must be ios or macosx')
+    target_define = target_defines[target]
+    mode = 'lto' if options.lto else 'snapshot'
+""")
+    replace_once(path, "        'mode': mode,\n", "        'mode': mode,\n        'target': target,\n")
+    replace_once(path, ' -DXNU_TARGET_OS_IOS\',', ' {target_define}\',')
     # This auxiliary build had an independent hard-coded eight-job setting.
     # Honour the same bounded parallelism as the main kernel build.
     replace_once(path, "'BUILD_WERROR=0','MAKEJOBS=-j8',",
@@ -189,6 +201,7 @@ def main():
     report['source_storage_restored_from'] = STORAGE_GOOD_REVISION
     report['release_reference_jobs'] = int(os.environ.get('JOBS', '2'))
     report['release_reference_saved_pc_helper'] = 'Original authenticated helper enabled only in the isolated comparison source copy'
+    report['release_reference_target'] = 'Matches UNIXNU_XNU_TARGET and the main kernel IOKit ABI; target included in cache identity'
     Path("reports").mkdir(exist_ok=True)
     Path("reports/build-plan.json").write_text(json.dumps(report, indent=2) + "\n")
     print("Prepared pinned full-capacity sources and fresh English automatic-login seed settings.")
