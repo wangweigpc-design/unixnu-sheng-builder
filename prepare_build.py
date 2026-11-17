@@ -65,6 +65,22 @@ def configure_reference_build():
     # Honour the same bounded parallelism as the main kernel build.
     replace_once(path, "'BUILD_WERROR=0','MAKEJOBS=-j8',",
                  "'BUILD_WERROR=0',f'MAKEJOBS=-j{int(os.environ.get(\"JOBS\", \"2\"))}',")
+    # The macOS outside-memory probe calls add_saved_state_pc, whose original
+    # authenticated implementation is feature-gated in the Apple header. The
+    # DEVELOPMENT build exposes it, but the RELEASE comparison build does not.
+    # Enable that same helper only in the isolated, non-booted comparison copy;
+    # retain its original PAC validation and signed-thread-state manipulation.
+    replace_once(path, '-DXNU_SOURCE_CORECRYPTO14=1 -DXNU_BOOT_PROGRESS=0',
+                 '-DXNU_SOURCE_CORECRYPTO14=1 -DXNU_BOOT_PROGRESS=0 -DUNIXNU_REFERENCE_MEMORY_PROBE=1')
+    marker = "        manifest = {str(p.relative_to(source)): hashlib.sha256(p.read_bytes()).hexdigest()\n"
+    replace_once(path, marker, '''        thread_status = source / 'osfmk/mach/arm/thread_status.h'
+        thread_text = thread_status.read_text()
+        guard = '#if HAS_ADD_SAVED_STATE_PC\\n'
+        if thread_text.count(guard) != 1:
+            raise RuntimeError('Pinned saved-state helper guard changed')
+        thread_status.write_text(thread_text.replace(guard,
+            '#if HAS_ADD_SAVED_STATE_PC || defined(UNIXNU_REFERENCE_MEMORY_PROBE)\\n'))
+'''+marker)
     marker = "    build_log = (output / f'{mode}-build.log').read_text()\n"
     replace_once(path, marker, marker+'''    required_list = output / f'{mode}-obj/RELEASE_ARM64_BCM2837' / ('nonltolink.filelist' if options.lto else 'link.filelist')
     if not required_list.is_file():
@@ -167,6 +183,7 @@ def main():
               "firmware_static_memory_corrected": True, "firmware_memory_ranges": memory_ranges}
     report['source_storage_restored_from'] = STORAGE_GOOD_REVISION
     report['release_reference_jobs'] = int(os.environ.get('JOBS', '2'))
+    report['release_reference_saved_pc_helper'] = 'Original authenticated helper enabled only in the isolated comparison source copy'
     Path("reports").mkdir(exist_ok=True)
     Path("reports/build-plan.json").write_text(json.dumps(report, indent=2) + "\n")
     print("Prepared pinned full-capacity sources and fresh English automatic-login seed settings.")

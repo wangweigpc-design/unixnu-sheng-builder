@@ -74,6 +74,10 @@ The RELEASE reference build also honours `JOBS` instead of its upstream
 hard-coded eight workers. If compilation stops before the link file list exists,
 its compiler errors are printed and all nested build logs are retained in the
 encrypted diagnostics.
+The macOS outside-memory probe needs Apple's `add_saved_state_pc` helper. The
+RELEASE comparison copy enables that original helper with a scoped feature
+guard; its signed-thread-state checks remain unchanged. The booted DEVELOPMENT
+kernel is not modified by this comparison-only repair.
 
 The workflow uses a standard runner, two compilation jobs, and a six-hour job
 limit. Build success does not imply hardware stability or verified charging,
